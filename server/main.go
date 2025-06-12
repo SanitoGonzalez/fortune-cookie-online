@@ -97,5 +97,65 @@ func HandlePick(c *gin.Context, x *Context) {
 }
 
 func HandleCreate(c *gin.Context, x *Context) {
+	type Request struct {
+		Content string `json:"content" binding:"required,max=256"`
+		Author  string `json:"author" binding:"required,max=32"`
+	}
 
+	type Response struct {
+		AllCount    uint `json:"all_count" binding:"required"`
+		AuthorCount uint `json:"author_count" binding:"required"`
+	}
+
+	var r Request
+	if c.Bind(&r) != nil {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+
+	ctx := context.Background()
+	tx, err := x.P.Begin(ctx)
+	if err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.Exec(ctx,
+		`INSERT INTO messages (content, author) 
+		VALUES ($1, $2)`, r.Content, r.Author,
+	)
+	if err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	var allCount uint
+	err = tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM messages`,
+	).Scan(&allCount)
+	if err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	var authorCount uint
+	err = tx.QueryRow(ctx,
+		`SELECT COUNT(*) FROM messages WHERE author=$1`,
+		r.Author,
+	).Scan(&authorCount)
+	if err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	c.JSON(http.StatusOK, Response{
+		AllCount:    allCount,
+		AuthorCount: authorCount,
+	})
 }
