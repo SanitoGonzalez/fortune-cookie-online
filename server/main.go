@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -71,6 +72,7 @@ func main() {
 	r := gin.Default()
 	r.POST("/pick", func(c *gin.Context) { HandlePick(c, x) })
 	r.POST("/create", func(c *gin.Context) { HandleCreate(c, x) })
+	r.POST("/stats", func(c *gin.Context) { HandleStats(c, x) })
 
 	r.Run()
 }
@@ -95,6 +97,7 @@ func HandlePick(c *gin.Context, x *Context) {
 	ctx := context.Background()
 	tx, err := x.P.Begin(ctx)
 	if err != nil {
+		log.Println(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
@@ -109,26 +112,24 @@ func HandlePick(c *gin.Context, x *Context) {
 		ORDER BY random() LIMIT 1`,
 	).Scan(&content, &author, &creator)
 	if err != nil {
+		log.Println(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 
 	_, err = tx.Exec(ctx,
-		`INSERT INTO visits (username, visit_type) 
-		VALUES ($1, $2, 1, now()) 
-		ON CONFLICT (username, visit_type)
-		DO UPDATE SET 
-			count = visits.count + 1 
-			last_visited=now()`,
+		`INSERT INTO visits (username, type) 
+		VALUES ($1, 'Pick')`,
 		r.Username,
-		"Pick",
 	)
 	if err != nil {
+		log.Println(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		log.Println(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
@@ -138,7 +139,7 @@ func HandlePick(c *gin.Context, x *Context) {
 
 func HandleCreate(c *gin.Context, x *Context) {
 	type Request struct {
-		Content  string `json:"content" binding:"required,max=256"`
+		Content  string `json:"content" binding:"required,max=512"`
 		Author   string `json:"author" binding:"required,max=32"`
 		Username string `json:"username" binding:"required,max=32"`
 	}
@@ -157,6 +158,7 @@ func HandleCreate(c *gin.Context, x *Context) {
 	ctx := context.Background()
 	tx, err := x.P.Begin(ctx)
 	if err != nil {
+		log.Println(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
@@ -164,12 +166,13 @@ func HandleCreate(c *gin.Context, x *Context) {
 
 	_, err = tx.Exec(ctx,
 		`INSERT INTO messages (content, author, creator) 
-		VALUES ($1, $2)`,
+		VALUES ($1, $2, $3)`,
 		r.Content,
 		r.Author,
 		r.Username,
 	)
 	if err != nil {
+		log.Println(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
@@ -179,6 +182,7 @@ func HandleCreate(c *gin.Context, x *Context) {
 		`SELECT COUNT(*) FROM messages`,
 	).Scan(&allCount)
 	if err != nil {
+		log.Println(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
@@ -189,11 +193,24 @@ func HandleCreate(c *gin.Context, x *Context) {
 		r.Username,
 	).Scan(&userCount)
 	if err != nil {
+		log.Println(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	_, err = tx.Exec(ctx,
+		`INSERT INTO visits (username, type) 
+		VALUES ($1, 'Create')`,
+		r.Username,
+	)
+	if err != nil {
+		log.Println(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		log.Println(err)
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
@@ -201,5 +218,74 @@ func HandleCreate(c *gin.Context, x *Context) {
 	c.JSON(http.StatusOK, Response{
 		AllCount:  allCount,
 		UserCount: userCount,
+	})
+}
+
+func HandleStats(c *gin.Context, x *Context) {
+	type Request struct {
+		Username string `json:"username" binding:"required,max=32"`
+	}
+
+	type Response struct {
+		AllCount    uint `json:"all_count" binding:"required"`
+		UserCount   uint `json:"user_count" binding:"required"`
+		AllVisits   uint `json:"all_visits" binding:"required"`
+		TodayVisits uint `json:"today_visits" binding:"required"`
+	}
+
+	var r Request
+	if c.Bind(&r) != nil {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+
+	ctx := context.Background()
+
+	var allCount uint
+	err := x.P.QueryRow(ctx,
+		`SELECT COUNT(*) FROM messages`,
+	).Scan(&allCount)
+	if err != nil {
+		log.Println(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	var userCount uint
+	err = x.P.QueryRow(ctx,
+		`SELECT COUNT(*) FROM messages WHERE creator=$1`,
+		r.Username,
+	).Scan(&userCount)
+	if err != nil {
+		log.Println(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	var allVisits uint
+	err = x.P.QueryRow(ctx,
+		`SELECT COUNT(*) FROM visits`,
+	).Scan(&allVisits)
+	if err != nil {
+		log.Println(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	var todayVisits uint
+	err = x.P.QueryRow(ctx,
+		`SELECT COUNT(*) FROM visits WHERE created >= CURRENT_DATE AND created <= CURRENT_DATE + 1`,
+	).Scan(&todayVisits)
+	if err != nil {
+		log.Println(err)
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	c.JSON(http.StatusOK, Response{
+		AllCount:    allCount,
+		UserCount:   userCount,
+		AllVisits:   allVisits,
+		TodayVisits: todayVisits,
 	})
 }

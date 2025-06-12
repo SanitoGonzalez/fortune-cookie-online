@@ -48,17 +48,16 @@ func main() {
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		fmt.Print(
-			`------- 선택 -------
-(1) 포츈 쿠키 열기
-(2) 포츈 쿠키 만들기
-`)
+		fmt.Print("------- 선택 -------\n" +
+			"(1) 포츈 쿠키 열기\n" +
+			"(2) 포츈 쿠키 만들기\n" +
+			"(3) 통계 보기\n")
 
 		action, _ := reader.ReadString('\n')
 		action = strings.TrimSpace(action)
 		i, err := strconv.Atoi(action)
 		if err != nil {
-			fmt.Print("1 또는 2를 입력하세요.\n\n")
+			fmt.Print("1, 2 또는 3을 입력하세요.\n\n")
 			continue
 		}
 
@@ -67,8 +66,10 @@ func main() {
 			handlePick(config)
 		case 2:
 			handleCreate(config, reader)
+		case 3:
+			handleStats(config)
 		default:
-			fmt.Print("1 또는 2를 입력하세요.\n\n")
+			fmt.Print("1, 2 또는 3을 입력하세요.\n\n")
 			continue
 		}
 
@@ -77,7 +78,12 @@ func main() {
 }
 
 func handlePick(c *Config) {
-	resp, err := http.Post(c.server_url()+"/pick", "application/json", nil)
+	payload := map[string]string{
+		"username": c.User.Name,
+	}
+	body, _ := json.Marshal(payload)
+
+	resp, err := http.Post(c.server_url()+"/pick", "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		fmt.Println("요청 실패:", err)
 		return
@@ -92,13 +98,15 @@ func handlePick(c *Config) {
 	var result struct {
 		Content string `json:"content"`
 		Author  string `json:"author"`
+		Creator string `json:"creator"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		fmt.Println("잘못된 응답 데이터:", err)
 		return
 	}
 
-	fmt.Printf("\n\"%s\"\n  - %s\n", result.Content, result.Author)
+	fmt.Println()
+	fmt.Printf("\"%s\"\n  - %s (%s)\n", result.Content, result.Author, result.Creator)
 }
 
 func handleCreate(c *Config, reader *bufio.Reader) {
@@ -106,7 +114,7 @@ func handleCreate(c *Config, reader *bufio.Reader) {
 	content, _ := reader.ReadString('\n')
 	content = strings.TrimSpace(content)
 
-	if len(content) == 0 || len(content) > 256 {
+	if len(content) == 0 || len(content) > 512 {
 		fmt.Println("문구의 길이가 잘못됐습니다.")
 		return
 	}
@@ -148,7 +156,44 @@ func handleCreate(c *Config, reader *bufio.Reader) {
 		return
 	}
 
+	fmt.Println()
 	fmt.Printf("포츈 쿠키를 만들었습니다!\n")
 	fmt.Printf("포츈 쿠키 전체 갯수: %d\n", result.AllCount)
 	fmt.Printf("%s이(가) 만든 포츈 쿠키 갯수: %d\n", c.User.Name, result.UserCount)
+}
+
+func handleStats(c *Config) {
+	payload := map[string]string{
+		"username": c.User.Name,
+	}
+	body, _ := json.Marshal(payload)
+
+	resp, err := http.Post(c.server_url()+"/stats", "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		fmt.Println("요청 실패:", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		fmt.Println("잘못된 응답:", resp.Status)
+		return
+	}
+
+	var result struct {
+		AllCount    uint `json:"all_count"`
+		UserCount   uint `json:"user_count"`
+		AllVisits   uint `json:"all_visits"`
+		TodayVisits uint `json:"today_visits"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		fmt.Println("잘못된 응답 데이터:", err)
+		return
+	}
+
+	fmt.Println()
+	fmt.Printf("포츈 쿠키 전체 갯수: %d\n", result.AllCount)
+	fmt.Printf("%s이(가) 만든 포츈 쿠키 갯수: %d\n", c.User.Name, result.UserCount)
+	fmt.Printf("전체 방문 수: %d\n", result.AllVisits)
+	fmt.Printf("오늘 방문 수: %d\n", result.TodayVisits)
 }
