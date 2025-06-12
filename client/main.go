@@ -18,6 +18,10 @@ type Config struct {
 		Host string `toml:"host"`
 		Port uint16 `toml:"port"`
 	} `toml:"server"`
+
+	User struct {
+		Name string `toml:"name"`
+	} `toml:"user"`
 }
 
 func (c *Config) server_url() string {
@@ -31,6 +35,11 @@ func loadConfig() *Config {
 		os.Exit(1)
 	}
 
+	if len(config.User.Name) < 4 || len(config.User.Name) > 32 {
+		fmt.Printf("사용자 이름이 너무 짧거나 깁니다!")
+		os.Exit(1)
+	}
+
 	return config
 }
 
@@ -40,7 +49,7 @@ func main() {
 
 	for {
 		fmt.Print(
-			`----- 선택 -----
+			`------- 선택 -------
 (1) 포츈 쿠키 열기
 (2) 포츈 쿠키 만들기
 `)
@@ -102,18 +111,19 @@ func handleCreate(c *Config, reader *bufio.Reader) {
 		return
 	}
 
-	fmt.Print("이름을 입력하세요: ")
+	fmt.Print("저자를 입력하세요: ")
 	author, _ := reader.ReadString('\n')
 	author = strings.TrimSpace(author)
 
 	if len(author) == 0 || len(author) > 32 {
-		fmt.Println("이름의 길이가 잘못됐습니다.")
+		fmt.Println("저자의 길이가 잘못됐습니다.")
 		return
 	}
 
 	payload := map[string]string{
-		"content": content,
-		"author":  author,
+		"content":  content,
+		"author":   author,
+		"username": c.User.Name,
 	}
 	body, _ := json.Marshal(payload)
 
@@ -130,8 +140,8 @@ func handleCreate(c *Config, reader *bufio.Reader) {
 	}
 
 	var result struct {
-		AllCount    uint `json:"all_count"`
-		AuthorCount uint `json:"author_count"`
+		AllCount  uint `json:"all_count"`
+		UserCount uint `json:"user_count"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		fmt.Println("잘못된 응답 데이터:", err)
@@ -140,5 +150,5 @@ func handleCreate(c *Config, reader *bufio.Reader) {
 
 	fmt.Printf("포츈 쿠키를 만들었습니다!\n")
 	fmt.Printf("포츈 쿠키 전체 갯수: %d\n", result.AllCount)
-	fmt.Printf("%s이(가) 만든 포츈 쿠키 갯수: %d\n", author, result.AuthorCount)
+	fmt.Printf("%s이(가) 만든 포츈 쿠키 갯수: %d\n", c.User.Name, result.UserCount)
 }
